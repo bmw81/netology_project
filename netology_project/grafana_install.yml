@@ -1,0 +1,114 @@
+- name: Install Grafana from direct .deb download
+  hosts: grafana
+  become: yes
+  vars:
+    grafana_version: "10.2.2"
+    
+  tasks:
+    - name: Install prerequisites
+      apt:
+        name:
+          - apt-transport-https
+          - software-properties-common
+          - wget
+          - curl
+          - gnupg
+        state: present
+        update_cache: yes
+    
+    - name: Download Grafana .deb package directly
+      get_url:
+        url: "https://dl.grafana.com/oss/release/grafana_{{ grafana_version }}_amd64.deb"
+        dest: /tmp/grafana.deb
+        mode: '0644'
+
+    - name: Install dependencies for Grafana
+      apt:
+        name:
+          - adduser
+          - libfontconfig1
+        state: present
+        update_cache: yes
+
+    - name: Install Grafana from .deb package
+      apt:
+        deb: /tmp/grafana.deb
+        state: present
+
+    - name: Configure Grafana network settings
+      lineinfile:
+        path: /etc/grafana/grafana.ini
+        regexp: '^{{ item.regexp }}'
+        line: '{{ item.line }}'
+        backup: yes
+      loop:
+        - { regexp: '^;?http_addr =', line: 'http_addr = 0.0.0.0' }
+        - { regexp: '^;?protocol =', line: 'protocol = http' }
+        # Убрал строку с domain, так как она не критична
+
+    - name: Ensure Grafana service directory exists
+      file:
+        path: /etc/systemd/system/grafana-server.service.d
+        state: directory
+        mode: '0755'
+
+    - name: Add systemd override for better startup
+      copy:
+        content: |
+          [Service]
+          Restart=always
+          RestartSec=5
+          TimeoutStartSec=60
+        dest: /etc/systemd/system/grafana-server.service.d/override.conf
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable Grafana service
+      systemd:
+        name: grafana-server
+        state: restarted
+        enabled: yes
+
+    - name: Wait for Grafana to start properly
+      wait_for:
+        port: 3000
+        host: "0.0.0.0"
+        state: started
+        timeout: 60
+        delay: 10
+
+    - name: Verify Grafana is listening on all interfaces
+      shell: |
+        ss -tlnp | grep 3000
+      register: network_status
+
+    - name: Display network status
+      debug:
+        var: network_status.stdout
+
+    - name: Test internal access
+      uri:
+        url: "http://localhost:3000/api/health"
+        method: GET
+        status_code: 200
+      register: internal_check
+
+    - name: Clean up temporary files
+      file:
+        path: /tmp/grafana.deb
+        state: absent
+
+    - name: Display success information
+      debug:
+        msg: |
+          ✅ Grafana successfully installed and configured!
+          🌐 Internal URL: http://localhost:3000
+          🔗 External URL: http://{{ inventory_hostname }}:3000
+          🌍 Public URL: http://158.160.55.211:3000
+          👤 Username: admin
+          🔑 Password: admin
+          
+          Health check: {{ "PASSED" if internal_check.status == 200 else "FAILED" }}

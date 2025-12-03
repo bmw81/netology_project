@@ -1,0 +1,15 @@
+#cloud-config
+users:
+  - name: mike
+    groups: sudo
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3Nza..........full_pub_key...........thyS2v5/ mike@mike-Perfectum-Series
+      
+packages:
+  - openssh-server
+
+runcmd:
+  - systemctl enable ssh
+  - systemctl restart ssh

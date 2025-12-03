@@ -1,0 +1,225 @@
+---
+- name: test
+  gather_facts: false
+  hosts: webservers
+  vars:
+    ansible_ssh_user: mike
+  become: yes
+
+  pre_tasks:
+    - name: Validating the ssh port is open and
+      wait_for:
+        host: "{{ (ansible_ssh_host|default(ansible_host))|default(inventory_hostname) }}"
+        port: 22
+        delay: 5
+        timeout: 300
+        state: started
+        search_regex: OpenSSH
+
+  tasks:
+    - name: create test file
+      copy:
+        dest: /tmp/test
+        content: "success"
+
+- name: Установка и настройка nginx со статическими страницами
+  hosts: webservers
+  become: true
+  vars:
+    web_root: /var/www/html
+    test_pages_dir: "{{ web_root }}/test-pages"
+    
+  tasks:
+    
+    # ========== 1. УСТАНОВКА NGINX ==========
+    - name: Обновление списка пакетов
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Установить nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    # ========== 2. СОЗДАНИЕ ДИРЕКТОРИЙ ==========
+    - name: Создать корневую директорию веб-сайта
+      file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Создать директорию для тестовых страниц
+      file:
+        path: "{{ test_pages_dir }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    # ========== 3. КОПИРОВАНИЕ СТАТИЧЕСКИХ СТРАНИЦ ==========
+    
+    # Основные страницы
+    - name: Копировать главную страницу
+      template:
+        src: files/nginx/index.html
+        dest: "{{ web_root }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Копировать страницу информации
+      template:
+        src: files/nginx/info.html
+        dest: "{{ web_root }}/info.html"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Копировать страницу статуса
+      template:
+        src: files/nginx/status.html
+        dest: "{{ web_root }}/status.html"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    # Тестовые страницы
+    - name: Копировать тестовые страницы
+      template:
+        src: "{{ item }}"
+        dest: "{{ test_pages_dir }}/{{ item | basename }}"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+      loop:
+        - files/nginx/test-pages/api-test.html
+        - files/nginx/test-pages/load-test.html
+        - files/nginx/test-pages/performance.html
+
+    # ========== 4. НАСТРОЙКА NGINX ==========
+    - name: Ensure nginx creates access logs
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^(\s+)access_log'
+        line: '    access_log /var/log/nginx/access.log;'
+        backup: yes
+
+    - name: Create nginx configuration
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name _;
+              root {{ web_root }};
+              index index.html;
+              
+              access_log /var/log/nginx/access.log;
+              error_log /var/log/nginx/error.log;
+              
+              # Статические файлы
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+              
+              # Кэширование статических файлов
+              location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+                  expires 30d;
+                  add_header Cache-Control "public, immutable";
+              }
+              
+              # Запрет доступа к скрытым файлам
+              location ~ /\. {
+                  deny all;
+              }
+              
+              # Тестовый эндпоинт
+              location /health {
+                  return 200 "OK\n";
+                  add_header Content-Type text/plain;
+              }
+              
+              location /metrics {
+                  return 404;
+              }
+          }
+        dest: /etc/nginx/sites-available/default
+        backup: yes
+
+    # ========== 5. ПРОВЕРКА И ЗАПУСК ==========
+    - name: Test nginx configuration
+      command: nginx -t
+      changed_when: false
+
+    - name: Ensure nginx log directory exists
+      file:
+        path: /var/log/nginx
+        state: directory
+        mode: '0755'
+        recurse: yes
+
+    - name: Перезапустить nginx
+      service:
+        name: nginx
+        state: restarted
+
+    # ========== 6. ТЕСТИРОВАНИЕ ==========
+    - name: Generate test traffic to create logs
+      shell: |
+        # Тестируем основные страницы
+        for page in / /info.html /status.html /test-pages/api-test.html; do
+          curl -s -o /dev/null -w "Page: $page - Status: %{http_code}\n" http://localhost$page
+          sleep 1
+        done
+        
+        # Тестируем health endpoint
+        curl -s http://localhost/health
+      register: curl_test
+      ignore_errors: yes
+
+    - name: Display test results
+      debug:
+        var: curl_test.stdout_lines
+
+    - name: Check nginx access logs
+      shell: |
+        echo "=== NGINX Logs ==="
+        echo "Access log:"
+        ls -la /var/log/nginx/access.log
+        echo -e "\nLast 5 lines:"
+        tail -5 /var/log/nginx/access.log 2>/dev/null || echo "Log is empty"
+        echo -e "\nError log:"
+        tail -5 /var/log/nginx/error.log 2>/dev/null || echo "No errors"
+      register: log_check
+      ignore_errors: yes
+
+    - name: Display log status
+      debug:
+        var: log_check.stdout_lines
+
+    # ========== 7. ФИНАЛЬНАЯ ПРОВЕРКА ==========
+    - name: Verify web server is responding
+      uri:
+        url: http://localhost/
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: http_check
+
+    - name: Final success message
+      debug:
+        msg: |
+          ✅ NGINX успешно установлен и настроен!
+          
+          📍 Доступные страницы:
+          - http://{{ ansible_default_ipv4.address }}/ (Главная)
+          - http://{{ ansible_default_ipv4.address }}/info.html (Информация)
+          - http://{{ ansible_default_ipv4.address }}/status.html (Статус)
+          - http://{{ ansible_default_ipv4.address }}/test-pages/ (Тестовые страницы)
+          - http://{{ ansible_default_ipv4.address }}/health (Health check)
+          
+          📊 Логи: /var/log/nginx/
+          ⚙️  Конфиг: /etc/nginx/sites-available/default

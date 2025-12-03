@@ -1,0 +1,422 @@
+---
+- name: Deploy complete monitoring stack
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    node_exporter_version: "1.7.0"
+    prometheus_version: "2.47.0"
+
+  tasks:
+    - name: Update package cache (Ubuntu/Debian)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages (Ubuntu/Debian)
+      apt:
+        name:
+          - wget
+          - curl
+          - tar
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+- name: Install Node Exporter on all monitoring targets
+  hosts: monitoring_targets
+  become: yes
+  vars:
+    node_exporter_version: "1.7.0"
+
+  tasks:
+    - name: Create prometheus user and group
+      group:
+        name: prometheus
+        state: present
+        system: yes
+
+    - name: Create prometheus user
+      user:
+        name: prometheus
+        system: yes
+        shell: /bin/false
+        home: /etc/prometheus
+        group: prometheus
+        state: present
+
+    - name: Create directories for Node Exporter
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /etc/prometheus/node-exporter
+        - /var/lib/prometheus
+
+    - name: Download Node Exporter
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+      register: download_result
+      until: download_result is succeeded
+      retries: 3
+      delay: 10
+
+    - name: Extract Node Exporter
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp/
+        remote_src: yes
+        creates: /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter
+
+    - name: Install Node Exporter binary
+      copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+        remote_src: yes
+
+    - name: Create Node Exporter systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          Documentation=https://prometheus.io/docs/guides/node-exporter/
+          After=network.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node-exporter.service
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Node Exporter service
+      systemd:
+        name: node-exporter
+        state: started
+        enabled: yes
+
+    - name: Wait for Node Exporter to start
+      wait_for:
+        port: 9100
+        delay: 5
+        state: started
+        timeout: 30
+
+    - name: Cleanup temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/node_exporter.tar.gz
+        - /tmp/node_exporter-{{ node_exporter_version }}.linux-amd64
+
+- name: Install and configure Prometheus server
+  hosts: prometheus
+  become: yes
+  vars:
+    prometheus_version: "2.47.0"
+
+  tasks:
+    - name: Install additional packages for Prometheus (Ubuntu)
+      apt:
+        name:
+          - wget
+          - curl
+          - tar
+          - sudo
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Create directories for Prometheus
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+        - /var/lib/prometheus/data
+        - /etc/prometheus/rules
+        - /etc/prometheus/file_sd
+
+    - name: Download Prometheus
+      get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp/prometheus.tar.gz
+        mode: '0644'
+      register: download_result
+      until: download_result is succeeded
+      retries: 3
+      delay: 10
+
+    - name: Extract Prometheus
+      unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /tmp/
+        remote_src: yes
+        creates: /tmp/prometheus-{{ prometheus_version }}.linux-amd64/prometheus
+
+    - name: Install Prometheus binaries
+      copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: /usr/local/bin/{{ item }}
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Install Prometheus configuration with dynamic targets
+      copy:
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+
+          rule_files:
+            # - "rules/*.yml"
+
+          scrape_configs:
+            - job_name: "prometheus"
+              static_configs:
+                - targets: ["localhost:9090"]
+
+            - job_name: "node-exporter"
+              file_sd_configs:
+                - files:
+                    - /etc/prometheus/file_sd/node_exporter_targets.yml
+                  refresh_interval: 5m
+              metrics_path: /metrics
+              scrape_interval: 15s
+
+            - job_name: "nginx-log-exporter"
+              file_sd_configs:
+                - files:
+                    - /etc/prometheus/file_sd/nginx_log_exporter_targets.yml
+                  refresh_interval: 5m
+              scrape_interval: 15s
+              scrape_timeout: 10s
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+
+    - name: Create dynamic targets configuration for node exporters
+      copy:
+        content: |
+          - targets:
+            {% for host in groups['webservers'] %}
+            - "{{ host }}:9100"
+            {% endfor %}
+            - "localhost:9100"
+            labels:
+              job: node-exporter
+        dest: "/etc/prometheus/file_sd/node_exporter_targets.yml"
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+
+    - name: Create dynamic targets configuration for nginx log exporters
+      copy:
+        content: |
+          - targets:
+            {% for host in groups['webservers'] %}
+            - "{{ host }}:4040"
+            {% endfor %}
+            labels:
+              job: nginx-log-exporter
+              environment: production
+        dest: "/etc/prometheus/file_sd/nginx_log_exporter_targets.yml"
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+
+    - name: Create Prometheus systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=Prometheus Time Series Collection and Processing Server
+          Documentation=https://prometheus.io/docs/
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          Type=simple
+          Restart=on-failure
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus/data \
+            --web.console.templates=/etc/prometheus/consoles \
+            --web.console.libraries=/etc/prometheus/console_libraries \
+            --web.listen-address=0.0.0.0:9090 \
+            --storage.tsdb.retention.time=15d \
+            --storage.tsdb.retention.size=512MB
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+
+    - name: Set ownership on Prometheus directories (with recursion)
+      file:
+        path: "{{ item }}"
+        owner: prometheus
+        group: prometheus
+        recurse: yes
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
+    - name: Set ownership on Prometheus binary files
+      file:
+        path: "{{ item }}"
+        owner: prometheus
+        group: prometheus
+      loop:
+        - /usr/local/bin/prometheus
+        - /usr/local/bin/promtool
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Prometheus service
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+
+    - name: Wait for Prometheus to start
+      wait_for:
+        port: 9090
+        delay: 10
+        state: started
+        timeout: 60
+
+    - name: Validate Prometheus configuration
+      shell: |
+        /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
+      register: prometheus_config_check
+      failed_when: prometheus_config_check.rc != 0
+      ignore_errors: yes
+
+    - name: Display validation result
+      debug:
+        var: prometheus_config_check.stdout
+
+    - name: Cleanup temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/prometheus.tar.gz
+        - /tmp/prometheus-{{ prometheus_version }}.linux-amd64
+
+- name: Verify monitoring setup
+  hosts: monitoring_targets
+  become: yes
+
+  tasks:
+    - name: Check Node Exporter service status
+      systemd:
+        name: node-exporter
+        state: started
+
+    - name: Check Node Exporter is listening
+      wait_for:
+        port: 9100
+        state: started
+        timeout: 10
+
+    - name: Verify Node Exporter metrics endpoint
+      uri:
+        url: "http://localhost:9100/metrics"
+        method: GET
+        status_code: 200
+      register: node_metrics
+      failed_when: node_metrics.status != 200
+
+- name: Verify Prometheus configuration
+  hosts: prometheus
+  become: yes
+
+  tasks:
+    - name: Check Prometheus service status
+      systemd:
+        name: prometheus
+        state: started
+
+    - name: Check Prometheus is listening
+      wait_for:
+        port: 9090
+        state: started
+        timeout: 10
+
+    - name: Reload Prometheus configuration
+      block:
+        - name: Try to reload Prometheus via API
+          uri:
+            url: http://localhost:9090/-/reload
+            method: POST
+            status_code: 200
+          register: prometheus_reload
+          ignore_errors: yes
+
+        - name: Restart Prometheus if reload failed
+          systemd:
+            name: prometheus
+            state: restarted
+          when: prometheus_reload is failed
+
+    - name: Wait for Prometheus to be ready
+      wait_for:
+        port: 9090
+        state: started
+        timeout: 30
+
+    - name: Simple check - Verify Prometheus is responding
+      shell: |
+        curl -s -f http://localhost:9090/api/v1/targets > /dev/null && echo "Prometheus API доступен" || echo "Ошибка доступа к API"
+      register: prometheus_check
+      ignore_errors: yes
+
+    - name: Display final status
+      debug:
+        msg: |
+          ✅ Complete monitoring stack deployed successfully!
+          
+          Components:
+          - Node Exporter: Installed on all monitoring targets
+          - Prometheus: Installed and configured
+          - Nginx Log Exporter: Targets configured for web servers
+          
+          Access URLs:
+          - Prometheus UI: http://{{ inventory_hostname }}:9090
+          - Node Exporter metrics: http://{{ inventory_hostname }}:9100/metrics
+          - Grafana: http://{{ groups['grafana'][0] }}:3000

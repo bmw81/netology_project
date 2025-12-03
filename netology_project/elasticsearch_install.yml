@@ -1,0 +1,205 @@
+---
+- name: Deploy and configure Elasticsearch
+  hosts: elastic
+  become: yes
+  vars:
+    es_cluster_name: "my-elastic-cluster"
+    es_heap_size: "512m"
+    
+  tasks:
+    # ========== 1. ОЧИСТКА СИСТЕМЫ ==========
+    - name: Clean up existing Elastic repositories
+      shell: |
+        rm -f /etc/apt/sources.list.d/elastic* 2>/dev/null || true
+        rm -f /etc/apt/sources.list.d/elasticsearch* 2>/dev/null || true
+        apt-get clean
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # ========== 2. УСТАНОВКА ЗАВИСИМОСТЕЙ ==========
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+        
+    - name: Install prerequisites
+      apt:
+        name:
+          - curl
+          - wget
+          - gnupg
+          - apt-transport-https
+        state: present
+        
+    - name: Install Java 17
+      apt:
+        name: openjdk-17-jdk
+        state: present
+        update_cache: yes
+
+    # ========== 3. УСТАНОВКА ELASTICSEARCH ==========
+    - name: Setup Elastic repository (Yandex mirror)
+      shell: |
+        # Download and add GPG key
+        wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+        
+        # Add repository
+        echo "deb https://mirror.yandex.ru/mirrors/elastic/8/ stable main" > /etc/apt/sources.list.d/elastic-8.list
+        
+        # Update apt
+        apt-get update
+      args:
+        executable: /bin/bash
+      register: repo_setup
+      changed_when: "'Get' in repo_setup.stdout or 'Hit' in repo_setup.stdout"
+
+    - name: Install Elasticsearch package
+      apt:
+        name: elasticsearch
+        state: present
+        update_cache: no
+      register: es_install
+
+    # ========== 4. ПОДГОТОВКА ДИРЕКТОРИЙ ==========
+    - name: Create necessary directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0755'
+      loop:
+        - /var/log/elasticsearch
+        - /var/lib/elasticsearch
+        - /etc/elasticsearch/scripts
+
+    # ========== 5. СИСТЕМНЫЕ НАСТРОЙКИ ==========
+    - name: Configure kernel parameters
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { name: 'vm.max_map_count', value: '262144' }
+        - { name: 'fs.file-max', value: '65536' }
+
+    - name: Configure user limits
+      lineinfile:
+        path: /etc/security/limits.conf
+        line: "elasticsearch - nofile 65536"
+        state: present
+
+    # ========== 6. КОНФИГУРАЦИЯ ELASTICSEARCH ==========
+    - name: Configure elasticsearch.yml
+      copy:
+        content: |
+          cluster.name: {{ es_cluster_name }}
+          node.name: "{{ ansible_hostname }}"
+          network.host: 0.0.0.0
+          http.port: 9200
+          discovery.type: single-node
+          
+          # Security disabled
+          xpack.security.enabled: false
+          xpack.security.enrollment.enabled: false
+          xpack.security.http.ssl.enabled: false
+          xpack.security.transport.ssl.enabled: false
+          
+          # Disable unnecessary features
+          xpack.ml.enabled: false
+          xpack.watcher.enabled: false
+          xpack.graph.enabled: false
+          
+          # Paths
+          path.logs: /var/log/elasticsearch
+          path.data: /var/lib/elasticsearch
+        dest: /etc/elasticsearch/elasticsearch.yml
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0644'
+      notify: restart elasticsearch
+
+    - name: Configure JVM options
+      copy:
+        content: |
+          -Xms{{ es_heap_size }}
+          -Xmx{{ es_heap_size }}
+          8-13:-XX:+UseConcMarkSweepGC
+          8-13:-XX:CMSInitiatingOccupancyFraction=75
+          8-13:-XX:+UseCMSInitiatingOccupancyOnly
+          14-:-XX:+UseG1GC
+        dest: /etc/elasticsearch/jvm.options
+        owner: elasticsearch
+        group: elasticsearch
+        mode: '0644'
+      notify: restart elasticsearch
+
+    # ========== 7. НАСТРОЙКА SYSTEMD ==========
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Start Elasticsearch service
+      systemd:
+        name: elasticsearch
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    # ========== 8. ПРОВЕРКА ==========
+    - name: Wait for Elasticsearch to start
+      wait_for:
+        port: 9200
+        delay: 10
+        timeout: 120
+        state: started
+
+    - name: Check Elasticsearch status
+      uri:
+        url: "http://localhost:9200"
+        method: GET
+        status_code: 200
+        timeout: 30
+      register: es_status
+      until: es_status.status == 200
+      retries: 10
+      delay: 5
+      ignore_errors: yes
+
+    - name: Display Elasticsearch status
+      debug:
+        msg: |
+          ✅ Elasticsearch запущен!
+          Версия: {{ es_status.json.version.number if es_status.json else 'unknown' }}
+          Кластер: {{ es_status.json.cluster_name if es_status.json else 'unknown' }}
+          URL: http://{{ ansible_default_ipv4.address }}:9200
+      when: es_status.status == 200
+
+    - name: Troubleshoot if failed
+      block:
+        - name: Check service status
+          command: systemctl status elasticsearch --no-pager
+          register: service_status
+          changed_when: false
+          
+        - name: Check logs
+          command: journalctl -u elasticsearch -n 20 --no-pager
+          register: es_logs
+          changed_when: false
+          
+        - name: Display troubleshooting info
+          debug:
+            msg: |
+              ❌ Elasticsearch не запустился
+              Статус службы: {{ service_status.stdout }}
+              Логи: {{ es_logs.stdout }}
+      when: es_status.status != 200
+
+  handlers:
+    - name: restart elasticsearch
+      systemd:
+        name: elasticsearch
+        state: restarted
+        daemon_reload: yes

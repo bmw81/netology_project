@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тестовый сайт - Главная</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px;
+        }
+        /* ... остальные стили ... */
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🛠️ Netology Project</h1>
+        <p>Демонстрация работы nginx</p>
+    </header>
+    
+    <div class="container">
+        <div class="nav">
+            <a href="/">Главная</a>
+            <a href="/info.html">Информация</a>
+            <a href="/status.html">Статус</a>
+            <a href="/test-pages/api-test.html">API тест</a>
+            <a href="/test-pages/load-test.html">Нагрузка</a>
+        </div>
+        
+        <h2>Добро пожаловать!</h2>
+        <p>Это тестовый веб-сайт, созданный для проверки работы nginx.</p>
+        
+        <div class="server-info">
+            <h3>📊 Информация о сервере:</h3>
+            <p><strong>Хост:</strong> {{ inventory_hostname }}</p>
+            <p><strong>IP адрес:</strong> {{ ansible_default_ipv4.address }}</p>
+            <p><strong>Время:</strong> <span id="current-time"></span></p>
+        </div>
+    </div>
+    
+    <script>
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = 
+                now.toLocaleString('ru-RU');
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+    </script>
+</body>
+</html>

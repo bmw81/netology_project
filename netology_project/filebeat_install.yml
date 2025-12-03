@@ -1,0 +1,221 @@
+---
+- name: Deploy and configure Filebeat
+  hosts: webservers
+  become: yes
+  vars:
+    elasticsearch_host: "{{ groups.elastic[0] }}"
+    es_port: 9200
+    nginx_access_log: "/var/log/nginx/access.log"
+    nginx_error_log: "/var/log/nginx/error.log"
+    
+  tasks:
+    # ========== 1. ПРЕДВАРИТЕЛЬНЫЕ ПРОВЕРКИ ==========
+    - name: Display deployment info
+      debug:
+        msg: |
+          📦 Filebeat Deployment Info:
+          Host: {{ inventory_hostname }} ({{ ansible_default_ipv4.address }})
+          Target Elasticsearch: {{ elasticsearch_host }}:{{ es_port }}
+          
+    - name: Verify Elasticsearch is reachable
+      uri:
+        url: "http://{{ elasticsearch_host }}:{{ es_port }}"
+        method: GET
+        timeout: 10
+        status_code: 200
+      register: es_check
+      ignore_errors: yes
+      
+    - name: Warn if Elasticsearch is not reachable
+      debug:
+        msg: "⚠️  Elasticsearch ({{ elasticsearch_host }}:{{ es_port }}) не доступен. Filebeat может не работать."
+      when: es_check.status != 200
+
+    # ========== 2. УСТАНОВКА ==========
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+        
+    - name: Clean up existing Elastic repositories
+      shell: |
+        rm -f /etc/apt/sources.list.d/elastic* 2>/dev/null || true
+        apt-get clean
+      args:
+        executable: /bin/bash
+      changed_when: false
+      
+    - name: Setup Elastic repository
+      shell: |
+        wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+        echo "deb https://mirror.yandex.ru/mirrors/elastic/8/ stable main" > /etc/apt/sources.list.d/elastic-8.list
+        apt-get update
+      args:
+        executable: /bin/bash
+      register: repo_setup
+
+    - name: Install Filebeat package
+      apt:
+        name: filebeat
+        state: present
+        update_cache: no
+
+    # ========== 3. ПОДГОТОВКА ЛОГОВ ==========
+    - name: Ensure nginx log directories exist
+      file:
+        path: /var/log/nginx
+        state: directory
+        mode: '0755'
+        
+    - name: Create nginx log files if missing
+      file:
+        path: "{{ item }}"
+        state: touch
+        owner: www-data
+        group: www-data
+        mode: '0644'
+      loop:
+        - "{{ nginx_access_log }}"
+        - "{{ nginx_error_log }}"
+
+    # ========== 4. КОНФИГУРАЦИЯ FILEBEAT ==========
+    - name: Create Filebeat log directory
+      file:
+        path: /var/log/filebeat
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure Filebeat main config
+      copy:
+        content: |
+          filebeat.inputs:
+          - type: log
+            enabled: true
+            paths:
+              - {{ nginx_access_log }}
+            tags: ["nginx-access"]
+            
+          - type: log
+            enabled: true
+            paths:
+              - {{ nginx_error_log }}
+            tags: ["nginx-error"]
+          
+          filebeat.config.modules:
+            path: /etc/filebeat/modules.d/*.yml
+            reload.enabled: true
+            reload.period: 10s
+          
+          output.elasticsearch:
+            hosts: ["{{ elasticsearch_host }}:{{ es_port }}"]
+          
+          logging.level: info
+          logging.to_files: true
+          logging.files:
+            path: /var/log/filebeat
+            name: filebeat
+            keepfiles: 7
+        dest: /etc/filebeat/filebeat.yml
+        owner: root
+        group: root
+        mode: '0640'
+      notify: restart filebeat
+
+    # ========== 5. НАСТРОЙКА МОДУЛЕЙ ==========
+    - name: Ensure modules directory exists
+      file:
+        path: /etc/filebeat/modules.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+        
+    - name: Create nginx module configuration
+      copy:
+        content: |
+          - module: nginx
+            access:
+              enabled: true
+              var.paths: ["{{ nginx_access_log }}"]
+            error:
+              enabled: true
+              var.paths: ["{{ nginx_error_log }}"]
+        dest: /etc/filebeat/modules.d/nginx.yml
+        owner: root
+        group: root
+        mode: '0640'
+      notify: restart filebeat
+
+    # ========== 6. ПРОВЕРКА КОНФИГУРАЦИИ ==========
+    - name: Test Filebeat configuration
+      command: filebeat test config -c /etc/filebeat/filebeat.yml
+      register: config_test
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Display config test result
+      debug:
+        msg: |
+          Config test: {{ '✅ PASSED' if config_test.rc == 0 else '❌ FAILED' }}
+          {{ config_test.stdout if config_test.rc == 0 else config_test.stderr }}
+
+    # ========== 7. ЗАПУСК ==========
+    - name: Stop Filebeat if running
+      systemd:
+        name: filebeat
+        state: stopped
+      ignore_errors: yes
+
+    - name: Setup Filebeat modules
+      command: filebeat setup --modules nginx
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Start Filebeat service
+      systemd:
+        name: filebeat
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    # ========== 8. ПРОВЕРКА ==========
+    - name: Check Filebeat service status
+      command: systemctl is-active filebeat
+      register: service_status
+      changed_when: false
+      
+    - name: Check Filebeat logs
+      shell: |
+        sleep 3
+        if [ -f /var/log/filebeat/filebeat ]; then
+          tail -5 /var/log/filebeat/filebeat
+        else
+          journalctl -u filebeat -n 5 --no-pager 2>/dev/null || echo "No logs yet"
+        fi
+      register: fb_logs
+      changed_when: false
+
+    - name: Display installation summary
+      debug:
+        msg: |
+          {{ '✅ Filebeat успешно установлен!' if service_status.stdout == 'active' else '⚠️  Filebeat установлен, но требует проверки' }}
+          
+          Статус службы: {{ service_status.stdout }}
+          Elasticsearch: {{ elasticsearch_host }}:{{ es_port }}
+          
+          Проверка логов Elasticsearch:
+          curl http://{{ elasticsearch_host }}:{{ es_port }}/_cat/indices/nginx*?v
+          
+    - name: Display Filebeat logs
+      debug:
+        msg: "Filebeat logs: {{ fb_logs.stdout_lines }}"
+      when: fb_logs.stdout_lines | length > 0
+
+  handlers:
+    - name: restart filebeat
+      systemd:
+        name: filebeat
+        state: restarted
+        daemon_reload: yes

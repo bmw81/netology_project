@@ -1,0 +1,60 @@
+# ======================== Elasticsearch Configuration =========================
+#
+# Cluster configuration
+cluster.name: {{ es_cluster_name }}
+node.name: {{ inventory_hostname_short }}
+
+# Paths
+path.data: {{ es_data_dir }}
+path.logs: {{ es_logs_dir }}
+
+# Network
+network.host: {{ es_network_host }}
+http.port: {{ es_http_port }}
+transport.port: {{ es_transport_port }}
+
+# Discovery for single node
+discovery.type: single-node
+discovery.seed_hosts: ["{{ groups.elastic | join(':9300,') }}:9300"]
+cluster.initial_master_nodes: ["{{ groups.elastic[0] }}"]
+
+# Security configuration
+xpack.security.enabled: {{ es_security_enabled }}
+xpack.security.enrollment.enabled: {{ es_security_enabled }}
+
+{% if es_security_enabled %}
+# SSL/TLS for security
+xpack.security.http.ssl.enabled: true
+xpack.security.http.ssl.keystore.path: certs/http.p12
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.keystore.path: certs/transport.p12
+xpack.security.transport.ssl.truststore.path: certs/transport.p12
+{% else %}
+# Security disabled
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false
+{% endif %}
+
+# Disable unnecessary features for development
+xpack.ml.enabled: false
+xpack.watcher.enabled: false
+xpack.graph.enabled: false
+xpack.license.self_generated.type: basic
+
+# Performance and monitoring
+thread_pool.write.queue_size: 1000
+thread_pool.search.queue_size: 1000
+
+# Index settings
+index.number_of_shards: 1
+index.number_of_replicas: 0
+
+# Gateway
+gateway.recover_after_nodes: 1
+gateway.expected_nodes: {{ groups.elastic | length }}
+
+# Slow logs (optional)
+index.search.slowlog.threshold.query.warn: 10s
+index.search.slowlog.threshold.query.info: 5s
+index.search.slowlog.threshold.query.debug: 2s
+index.search.slowlog.threshold.query.trace: 500ms

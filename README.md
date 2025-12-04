@@ -69,6 +69,8 @@ Cоздайте ВМ, разверните на ней Elasticsearch.
 [Playbook установки и настройки Kibana](/netology_project/kibana_install.yml)
 
 `С Kibana пока проблемы...`
+![Kibana failed](/img/kibana_failed.png)
+![Kibana log](/img/kibana_log.png)
 
 ---
 

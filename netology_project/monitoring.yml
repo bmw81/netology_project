@@ -229,13 +229,13 @@
       copy:
         content: |
           - targets:
-            {% for host in groups['webservers'] %}
-            - "{{ host }}:9100"
-            {% endfor %}
-            - "localhost:9100"
+            {% for host in groups['webservers'] -%}
+              - "{{ host }}:9100"
+            {% endfor -%}
+              - "localhost:9100"
             labels:
               job: node-exporter
-        dest: "/etc/prometheus/file_sd/node_exporter_targets.yml"
+        dest: /etc/prometheus/file_sd/node_exporter_targets.yml
         owner: prometheus
         group: prometheus
         mode: '0644'
@@ -244,13 +244,13 @@
       copy:
         content: |
           - targets:
-            {% for host in groups['webservers'] %}
-            - "{{ host }}:4040"
-            {% endfor %}
+            {% for host in groups['webservers'] -%}
+              - "{{ host }}:4040"
+            {% endfor -%}
             labels:
               job: nginx-log-exporter
               environment: production
-        dest: "/etc/prometheus/file_sd/nginx_log_exporter_targets.yml"
+        dest: /etc/prometheus/file_sd/nginx_log_exporter_targets.yml
         owner: prometheus
         group: prometheus
         mode: '0644'
@@ -324,7 +324,6 @@
         /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
       register: prometheus_config_check
       failed_when: prometheus_config_check.rc != 0
-      ignore_errors: yes
 
     - name: Display validation result
       debug:
@@ -399,12 +398,6 @@
         port: 9090
         state: started
         timeout: 30
-
-    - name: Simple check - Verify Prometheus is responding
-      shell: |
-        curl -s -f http://localhost:9090/api/v1/targets > /dev/null && echo "Prometheus API доступен" || echo "Ошибка доступа к API"
-      register: prometheus_check
-      ignore_errors: yes
 
     - name: Display final status
       debug:

@@ -1,205 +1,170 @@
 ---
-- name: Deploy and configure Elasticsearch
+- name: Install and configure Elasticsearch
   hosts: elastic
   become: yes
+  
   vars:
-    es_cluster_name: "my-elastic-cluster"
-    es_heap_size: "512m"
-    
+    elastic_version: "8.19.8"
+    network_host: "10.0.1.11"  # Явно указываем IP из инвентори
+  
   tasks:
-    # ========== 1. ОЧИСТКА СИСТЕМЫ ==========
-    - name: Clean up existing Elastic repositories
-      shell: |
-        rm -f /etc/apt/sources.list.d/elastic* 2>/dev/null || true
-        rm -f /etc/apt/sources.list.d/elasticsearch* 2>/dev/null || true
-        apt-get clean
-      args:
-        executable: /bin/bash
-      changed_when: false
-
-    # ========== 2. УСТАНОВКА ЗАВИСИМОСТЕЙ ==========
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
-        
+    # Шаг 1: Установка необходимых пакетов
     - name: Install prerequisites
       apt:
         name:
           - curl
-          - wget
           - gnupg
           - apt-transport-https
-        state: present
-        
-    - name: Install Java 17
-      apt:
-        name: openjdk-17-jdk
+          - ca-certificates
+          - wget
         state: present
         update_cache: yes
-
-    # ========== 3. УСТАНОВКА ELASTICSEARCH ==========
-    - name: Setup Elastic repository (Yandex mirror)
+    
+    # Шаг 2: Скачать и установить GPG-ключ Elastic
+    - name: Download and install Elastic GPG key
       shell: |
-        # Download and add GPG key
-        wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
-        
-        # Add repository
-        echo "deb https://mirror.yandex.ru/mirrors/elastic/8/ stable main" > /etc/apt/sources.list.d/elastic-8.list
-        
-        # Update apt
-        apt-get update
+        wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg
       args:
-        executable: /bin/bash
-      register: repo_setup
-      changed_when: "'Get' in repo_setup.stdout or 'Hit' in repo_setup.stdout"
-
-    - name: Install Elasticsearch package
+        creates: /usr/share/keyrings/elasticsearch-keyring.gpg
+    
+    # Шаг 3: Добавление репозитория и обновление кэша
+    - name: Add Yandex Elastic repository
+      copy:
+        dest: /etc/apt/sources.list.d/yandex-elastic.list
+        content: "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://mirror.yandex.ru/mirrors/elastic/8 stable main"
+        mode: '0644'
+    
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    # Шаг 4: Установка Elasticsearch
+    - name: Install Elasticsearch
       apt:
         name: elasticsearch
         state: present
-        update_cache: no
-      register: es_install
-
-    # ========== 4. ПОДГОТОВКА ДИРЕКТОРИЙ ==========
-    - name: Create necessary directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        owner: elasticsearch
-        group: elasticsearch
-        mode: '0755'
-      loop:
-        - /var/log/elasticsearch
-        - /var/lib/elasticsearch
-        - /etc/elasticsearch/scripts
-
-    # ========== 5. СИСТЕМНЫЕ НАСТРОЙКИ ==========
-    - name: Configure kernel parameters
+    
+    # Шаг 5: Установка Java
+    - name: Install Java
+      apt:
+        name: openjdk-17-jdk
+        state: present
+    
+    # Шаг 6: Увеличение лимитов виртуальной памяти для Elasticsearch
+    - name: Increase vm.max_map_count
       sysctl:
-        name: "{{ item.name }}"
-        value: "{{ item.value }}"
+        name: vm.max_map_count
+        value: '262144'
+        sysctl_set: yes
         state: present
         reload: yes
-      loop:
-        - { name: 'vm.max_map_count', value: '262144' }
-        - { name: 'fs.file-max', value: '65536' }
-
-    - name: Configure user limits
-      lineinfile:
-        path: /etc/security/limits.conf
-        line: "elasticsearch - nofile 65536"
-        state: present
-
-    # ========== 6. КОНФИГУРАЦИЯ ELASTICSEARCH ==========
-    - name: Configure elasticsearch.yml
+    
+    # Шаг 7: Полностью перезаписываем конфигурационный файл Elasticsearch
+    - name: Configure Elasticsearch
       copy:
+        dest: /etc/elasticsearch/elasticsearch.yml
         content: |
-          cluster.name: {{ es_cluster_name }}
-          node.name: "{{ ansible_hostname }}"
-          network.host: 0.0.0.0
+          # ----------------------------------- Paths ------------------------------------
+          path.data: /var/lib/elasticsearch
+          path.logs: /var/log/elasticsearch
+          
+          # ---------------------------------- Network -----------------------------------
+          network.host: "{{ network_host }}"
           http.port: 9200
+          
+          # --------------------------------- Discovery ----------------------------------
           discovery.type: single-node
           
-          # Security disabled
+          # --------------------------------- Security -----------------------------------
+          # Отключаем безопасность для упрощения тестирования
           xpack.security.enabled: false
           xpack.security.enrollment.enabled: false
           xpack.security.http.ssl.enabled: false
           xpack.security.transport.ssl.enabled: false
           
-          # Disable unnecessary features
-          xpack.ml.enabled: false
-          xpack.watcher.enabled: false
-          xpack.graph.enabled: false
+          # ---------------------------------- CORS --------------------------------------
+          http.cors.enabled: true
+          http.cors.allow-origin: "*"
+          http.cors.allow-headers: X-Requested-With,Content-Type,Content-Length,Authorization
           
-          # Paths
-          path.logs: /var/log/elasticsearch
-          path.data: /var/lib/elasticsearch
-        dest: /etc/elasticsearch/elasticsearch.yml
+          # --------------------------------- Cluster ------------------------------------
+          cluster.name: "elk-cluster"
+          node.name: "{{ inventory_hostname }}"
+        mode: '0644'
         owner: elasticsearch
         group: elasticsearch
-        mode: '0644'
-      notify: restart elasticsearch
-
+    
+    # Шаг 8: Настраиваем память для Elasticsearch
     - name: Configure JVM options
       copy:
+        dest: /etc/elasticsearch/jvm.options.d/heap-size.options
         content: |
-          -Xms{{ es_heap_size }}
-          -Xmx{{ es_heap_size }}
-          8-13:-XX:+UseConcMarkSweepGC
-          8-13:-XX:CMSInitiatingOccupancyFraction=75
-          8-13:-XX:+UseCMSInitiatingOccupancyOnly
-          14-:-XX:+UseG1GC
-        dest: /etc/elasticsearch/jvm.options
+          -Xms4g
+          -Xmx4g
+        mode: '0644'
         owner: elasticsearch
         group: elasticsearch
-        mode: '0644'
-      notify: restart elasticsearch
-
-    # ========== 7. НАСТРОЙКА SYSTEMD ==========
-    - name: Reload systemd
-      systemd:
-        daemon_reload: yes
-
-    - name: Start Elasticsearch service
+    
+    # Шаг 9: Устанавливаем правильные права
+    - name: Set proper permissions on Elasticsearch data and logs
+      file:
+        path: "{{ item }}"
+        owner: elasticsearch
+        group: elasticsearch
+        recurse: yes
+      loop:
+        - /var/lib/elasticsearch
+        - /var/log/elasticsearch
+        - /etc/elasticsearch
+    
+    # Шаг 10: Запуск и настройка Elasticsearch
+    - name: Start and enable Elasticsearch service
       systemd:
         name: elasticsearch
         state: started
         enabled: yes
         daemon_reload: yes
-
-    # ========== 8. ПРОВЕРКА ==========
+    
     - name: Wait for Elasticsearch to start
-      wait_for:
-        port: 9200
-        delay: 10
-        timeout: 120
-        state: started
-
-    - name: Check Elasticsearch status
+      pause:
+        seconds: 45
+    
+    - name: Check if Elasticsearch is running
+      shell: |
+        systemctl is-active elasticsearch
+      register: elastic_status
+      changed_when: false
+      failed_when: false
+    
+    - name: Display Elasticsearch status
+      debug:
+        msg: "Elasticsearch service status: {{ elastic_status.stdout }}"
+    
+    # Шаг 11: Проверка доступности Elasticsearch
+    - name: Verify Elasticsearch is accessible
       uri:
-        url: "http://localhost:9200"
+        url: "http://{{ network_host }}:9200/"
         method: GET
         status_code: 200
         timeout: 30
-      register: es_status
-      until: es_status.status == 200
+      register: elastic_check
+      until: elastic_check.status == 200
       retries: 10
       delay: 5
       ignore_errors: yes
-
-    - name: Display Elasticsearch status
+    
+    - name: Display Elasticsearch cluster info
       debug:
-        msg: |
-          ✅ Elasticsearch запущен!
-          Версия: {{ es_status.json.version.number if es_status.json else 'unknown' }}
-          Кластер: {{ es_status.json.cluster_name if es_status.json else 'unknown' }}
-          URL: http://{{ ansible_default_ipv4.address }}:9200
-      when: es_status.status == 200
-
-    - name: Troubleshoot if failed
-      block:
-        - name: Check service status
-          command: systemctl status elasticsearch --no-pager
-          register: service_status
-          changed_when: false
-          
-        - name: Check logs
-          command: journalctl -u elasticsearch -n 20 --no-pager
-          register: es_logs
-          changed_when: false
-          
-        - name: Display troubleshooting info
-          debug:
-            msg: |
-              ❌ Elasticsearch не запустился
-              Статус службы: {{ service_status.stdout }}
-              Логи: {{ es_logs.stdout }}
-      when: es_status.status != 200
-
-  handlers:
-    - name: restart elasticsearch
-      systemd:
-        name: elasticsearch
-        state: restarted
-        daemon_reload: yes
+        msg: "Elasticsearch is running at http://{{ network_host }}:9200/"
+    
+    # Шаг 12: Проверяем работу Elasticsearch
+    - name: Check Elasticsearch health
+      shell: |
+        curl -s "http://{{ network_host }}:9200/_cluster/health?pretty"
+      register: es_health
+      changed_when: false
+    
+    - name: Display Elasticsearch health
+      debug:
+        msg: "{{ es_health.stdout }}"

@@ -1,0 +1,1488 @@
+# data.yandex_compute_image.ubuntu_2204_lts:
+data "yandex_compute_image" "ubuntu_2204_lts" {
+    created_at          = "2025-12-01T11:15:59Z"
+    description         = "Ubuntu 22.04 lts v20251121030556"
+    family              = "ubuntu-2204-lts"
+    folder_id           = "standard-images"
+    hardware_generation = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    id                  = "fd87vvgamed91jv09b4h"
+    image_id            = "fd87vvgamed91jv09b4h"
+    labels              = {
+        "version" = "20251121030556"
+    }
+    min_disk_size       = 8
+    name                = "ubuntu-22-04-lts-v20251201"
+    os_type             = "linux"
+    pooled              = true
+    product_ids         = [
+        "f2e4m3guq551khlg5g9l",
+    ]
+    size                = 2
+    status              = "ready"
+}
+
+# local_file.inventory:
+resource "local_file" "inventory" {
+    content              = <<-EOT
+        [bastion]
+        89.169.131.251
+        
+        [webservers]
+        10.0.1.18				# 0 - первый интерфейс машины
+        10.0.2.5
+          
+        [prometheus]
+        10.0.1.24
+        
+        [grafana]
+        10.0.1.21
+        
+        [elastic]
+        10.0.1.11
+        
+        [kibana]
+        10.0.1.15
+          
+        [monitoring_targets:children]  # Группа всех хостов для мониторинга
+        webservers
+        prometheus
+          
+        [logging_targets:children]     # Группа всех хостов для сбора логов
+        webservers
+        elastic
+          
+        [webservers:vars]
+        ansible_ssh_common_args='-o ProxyCommand="ssh -p 22 -W %h:%p -q mike@89.169.131.251"'		# Для того, чтобы попасть на web-сервера надо пойти через бастион
+          
+        [prometheus:vars]
+        ansible_ssh_common_args='-o ProxyCommand="ssh -p 22 -W %h:%p -q mike@89.169.131.251"'		# Для того, чтобы попасть на prometheus надо пойти через бастион
+        
+        [grafana:vars]
+        ansible_ssh_common_args='-o ProxyCommand="ssh -p 22 -W %h:%p -q mike@89.169.131.251"'
+        
+        [elastic:vars]
+        ansible_ssh_common_args='-o ProxyCommand="ssh -p 22 -W %h:%p -q mike@89.169.131.251"'
+        
+        [kibana:vars]
+        ansible_ssh_common_args='-o ProxyCommand="ssh -p 22 -W %h:%p -q mike@89.169.131.251"'
+    EOT
+    content_base64sha256 = "I2vXTxXfbQZrJYqZ1AGwWfBztfSiWzdpP+7ova6NFdI="
+    content_base64sha512 = "0XLosovlQY8eMEjkF6TQ7C8ikMtEpQqdpSRy4NCxJ6PHrJmYjx86OB/gB1jcYM8P1ODX6QWlOOAEpOV17YTKYg=="
+    content_md5          = "0598480bf07ef441a662b1fb642ba36e"
+    content_sha1         = "8ce4189cea896441efb5b824a160d0536c2ae747"
+    content_sha256       = "236bd74f15df6d066b258a99d401b059f073b5f4a25b37693feee8bdae8d15d2"
+    content_sha512       = "d172e8b28be5418f1e3048e417a4d0ec2f2290cb44a50a9da52472e0d0b127a3c7ac99988f1f3a381fe00758dc60cf0fd4e0d7e905a538e004a4e575ed84ca62"
+    directory_permission = "0777"
+    file_permission      = "0777"
+    filename             = "./hosts.ini"
+    id                   = "8ce4189cea896441efb5b824a160d0536c2ae747"
+}
+
+# yandex_alb_backend_group.web-backend-group:
+resource "yandex_alb_backend_group" "web-backend-group" {
+    created_at  = "2025-12-07T15:26:11Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "ds7i4j65hfofh0tk2hm4"
+    name        = "web-backend-group"
+
+    http_backend {
+        http2            = false
+        name             = "http-backend"
+        port             = 80
+        storage_bucket   = [90mnull[0m[0m
+        target_group_ids = [
+            "ds7pjblhkuvlu4s7oa19",
+        ]
+        weight           = 1
+
+        healthcheck {
+            healthcheck_port        = 80
+            healthy_threshold       = 2
+            interval                = "2s"
+            interval_jitter_percent = 0
+            timeout                 = "3s"
+            unhealthy_threshold     = 2
+
+            http_healthcheck {
+                host  = [90mnull[0m[0m
+                http2 = false
+                path  = "/"
+            }
+        }
+    }
+}
+
+# yandex_alb_http_router.http-router:
+resource "yandex_alb_http_router" "http-router" {
+    created_at  = "2025-12-07T15:25:18Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "ds7maikd0ecrbka6coba"
+    labels      = {
+        "empty-label" = [90mnull[0m[0m
+        "tf-label"    = "tf-label-value"
+    }
+    name        = "http-router"
+}
+
+# yandex_alb_load_balancer.http-balancer:
+resource "yandex_alb_load_balancer" "http-balancer" {
+    allow_zonal_shift = false
+    created_at        = "2025-12-07T15:25:22Z"
+    description       = [90mnull[0m[0m
+    folder_id         = "b1grbnd43egs57caqic6"
+    id                = "ds7ljmiev4c203ao9ch0"
+    log_group_id      = [90mnull[0m[0m
+    name              = "http-balancer"
+    network_id        = "enptklrgdidpc8g5gcer"
+    region_id         = [90mnull[0m[0m
+    status            = "active"
+
+    allocation_policy {
+        location {
+            disable_traffic = false
+            subnet_id       = "e2lhaflib41oo2n67fdf"
+            zone_id         = "ru-central1-b"
+        }
+        location {
+            disable_traffic = false
+            subnet_id       = "e9bnbe5upvlvf20e57gf"
+            zone_id         = "ru-central1-a"
+        }
+    }
+
+    listener {
+        name = "http-listener"
+
+        endpoint {
+            ports = [
+                80,
+            ]
+
+            address {
+                external_ipv4_address {
+                    address = "158.160.173.209"
+                }
+            }
+        }
+
+        http {
+            handler {
+                allow_http10       = false
+                http_router_id     = "ds7maikd0ecrbka6coba"
+                rewrite_request_id = false
+            }
+        }
+    }
+}
+
+# yandex_alb_target_group.web-target-group:
+resource "yandex_alb_target_group" "web-target-group" {
+    created_at  = "2025-12-07T15:26:11Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "ds7pjblhkuvlu4s7oa19"
+    name        = "web-targets"
+
+    target {
+        ip_address           = "10.0.1.18"
+        private_ipv4_address = false
+        subnet_id            = "e9bnbe5upvlvf20e57gf"
+    }
+    target {
+        ip_address           = "10.0.2.5"
+        private_ipv4_address = false
+        subnet_id            = "e2lhaflib41oo2n67fdf"
+    }
+}
+
+# yandex_alb_virtual_host.my-virtual-host:
+resource "yandex_alb_virtual_host" "my-virtual-host" {
+    http_router_id = "ds7maikd0ecrbka6coba"
+    id             = "ds7maikd0ecrbka6coba/alb-virtual-host"
+    name           = "alb-virtual-host"
+
+    rate_limit {
+        all_requests {
+            per_minute = 0
+            per_second = 300
+        }
+        requests_per_ip {
+            per_minute = 0
+            per_second = 300
+        }
+    }
+
+    route {
+        disable_security_profile = false
+        name                     = "route-1"
+
+        http_route {
+            http_match {
+                path {
+                    exact  = "/"
+                    prefix = [90mnull[0m[0m
+                    regex  = [90mnull[0m[0m
+                }
+            }
+            http_route_action {
+                auto_host_rewrite = false
+                backend_group_id  = "ds7i4j65hfofh0tk2hm4"
+                host_rewrite      = [90mnull[0m[0m
+                idle_timeout      = [90mnull[0m[0m
+                prefix_rewrite    = [90mnull[0m[0m
+                timeout           = [90mnull[0m[0m
+            }
+        }
+    }
+}
+
+# yandex_compute_instance.bastion:
+resource "yandex_compute_instance" "bastion" {
+    created_at                = "2025-12-07T15:25:25Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "bastion.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "bastion"
+    id                        = "fhmvrt8qr662npd2e7ah"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "bastion"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-a"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "fhm0cjpvt3772dkj823d"
+        disk_id     = "fhm0cjpvt3772dkj823d"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 10
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.1.16"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:1f:df:51:ad"
+        nat                = true
+        nat_ip_address     = "89.169.131.251"
+        nat_ip_version     = "IPV4"
+        security_group_ids = [
+            "enp1tcurrms4hqd53b3c",
+            "enpk2i3dsvevlr2og9lg",
+        ]
+        subnet_id          = "e9bnbe5upvlvf20e57gf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 2
+        gpus          = 0
+        memory        = 1
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_compute_instance.elastic:
+resource "yandex_compute_instance" "elastic" {
+    created_at                = "2025-12-07T15:25:37Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "elastic.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "elastic"
+    id                        = "fhmk9d87s6cgjkgvcsbe"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "elastic"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-a"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "fhm69774ef1ieatlet2m"
+        disk_id     = "fhm69774ef1ieatlet2m"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 50
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.1.11"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:14:4b:50:7e"
+        nat                = false
+        nat_ip_address     = [90mnull[0m[0m
+        nat_ip_version     = [90mnull[0m[0m
+        security_group_ids = [
+            "enp2vhh3r5e0ds1hnuen",
+            "enpk2i3dsvevlr2og9lg",
+        ]
+        subnet_id          = "e9bnbe5upvlvf20e57gf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 4
+        gpus          = 0
+        memory        = 8
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_compute_instance.grafana:
+resource "yandex_compute_instance" "grafana" {
+    created_at                = "2025-12-07T15:25:26Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "grafana.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "grafana"
+    id                        = "fhmiuph27bjek46t60v4"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "grafana"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-a"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "fhmqnmu2o07jifgkbum2"
+        disk_id     = "fhmqnmu2o07jifgkbum2"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 10
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.1.21"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:12:f6:62:23"
+        nat                = true
+        nat_ip_address     = "178.154.220.180"
+        nat_ip_version     = "IPV4"
+        security_group_ids = [
+            "enpajggnt0q2kpl03ciu",
+            "enpk2i3dsvevlr2og9lg",
+        ]
+        subnet_id          = "e9bnbe5upvlvf20e57gf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 2
+        gpus          = 0
+        memory        = 2
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_compute_instance.kibana:
+resource "yandex_compute_instance" "kibana" {
+    created_at                = "2025-12-07T15:25:36Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "kibana.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "kibana"
+    id                        = "fhmn48bum0150tjktrrd"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "kibana"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-a"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "fhm02snkpr9v146muu0t"
+        disk_id     = "fhm02snkpr9v146muu0t"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 20
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.1.15"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:17:22:17:eb"
+        nat                = true
+        nat_ip_address     = "178.154.223.239"
+        nat_ip_version     = "IPV4"
+        security_group_ids = [
+            "enp45ad56vvnj1v377nq",
+            "enpk2i3dsvevlr2og9lg",
+        ]
+        subnet_id          = "e9bnbe5upvlvf20e57gf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 4
+        gpus          = 0
+        memory        = 10
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_compute_instance.prometheus:
+resource "yandex_compute_instance" "prometheus" {
+    created_at                = "2025-12-07T15:25:22Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "prometheus.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "prometheus"
+    id                        = "fhmusn4sdau2g7kqs381"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "prometheus"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-a"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "fhmcpgk14p5l7tjejuv1"
+        disk_id     = "fhmcpgk14p5l7tjejuv1"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 20
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.1.24"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:1e:e5:c9:c6"
+        nat                = false
+        nat_ip_address     = [90mnull[0m[0m
+        nat_ip_version     = [90mnull[0m[0m
+        security_group_ids = [
+            "enpk2i3dsvevlr2og9lg",
+        ]
+        subnet_id          = "e9bnbe5upvlvf20e57gf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 2
+        gpus          = 0
+        memory        = 4
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_compute_instance.web_a:
+resource "yandex_compute_instance" "web_a" {
+    created_at                = "2025-12-07T15:25:28Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "web-a.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "web-a"
+    id                        = "fhmvq3d32bn16id7au30"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "web-a"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-a"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "fhm1figmnfeg3o8to7o5"
+        disk_id     = "fhm1figmnfeg3o8to7o5"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 10
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.1.18"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:1f:d0:da:31"
+        nat                = false
+        nat_ip_address     = [90mnull[0m[0m
+        nat_ip_version     = [90mnull[0m[0m
+        security_group_ids = [
+            "enpk2i3dsvevlr2og9lg",
+            "enpmk8rpn4puemo9n0jb",
+        ]
+        subnet_id          = "e9bnbe5upvlvf20e57gf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 2
+        gpus          = 0
+        memory        = 1
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_compute_instance.web_b:
+resource "yandex_compute_instance" "web_b" {
+    created_at                = "2025-12-07T15:25:28Z"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    fqdn                      = "web-b.ru-central1.internal"
+    gpu_cluster_id            = [90mnull[0m[0m
+    hardware_generation       = [
+        {
+            generation2_features = []
+            legacy_features      = [
+                {
+                    pci_topology = "PCI_TOPOLOGY_V2"
+                },
+            ]
+        },
+    ]
+    hostname                  = "web-b"
+    id                        = "epdl67hg2rjm0ac2q2ic"
+    maintenance_grace_period  = [90mnull[0m[0m
+    metadata                  = {
+        "serial-port-enable" = "1"
+        "user-data"          = <<-EOT
+            #cloud-config
+            users:
+              - name: mike
+                groups: sudo
+                shell: /bin/bash
+                sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+                ssh_authorized_keys:
+                  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEeUsauATqLdTRpLKLuDRPtOkRrnS5kM9OE+thyS2v5/ mike@mike-Perfectum-Series
+                  
+            packages:
+              - openssh-server
+            
+            runcmd:
+              - systemctl enable ssh
+              - systemctl restart ssh
+        EOT
+    }
+    name                      = "web-b"
+    network_acceleration_type = "standard"
+    platform_id               = "standard-v3"
+    service_account_id        = [90mnull[0m[0m
+    status                    = "running"
+    zone                      = "ru-central1-b"
+
+    boot_disk {
+        auto_delete = true
+        device_name = "epdalhoe1167fq63drhf"
+        disk_id     = "epdalhoe1167fq63drhf"
+        mode        = "READ_WRITE"
+
+        initialize_params {
+            block_size  = 4096
+            description = [90mnull[0m[0m
+            image_id    = "fd87vvgamed91jv09b4h"
+            kms_key_id  = [90mnull[0m[0m
+            name        = [90mnull[0m[0m
+            size        = 10
+            snapshot_id = [90mnull[0m[0m
+            type        = "network-hdd"
+        }
+    }
+
+    metadata_options {
+        aws_v1_http_endpoint = 1
+        aws_v1_http_token    = 2
+        gce_http_endpoint    = 1
+        gce_http_token       = 1
+    }
+
+    network_interface {
+        index              = 0
+        ip_address         = "10.0.2.5"
+        ipv4               = true
+        ipv6               = false
+        ipv6_address       = [90mnull[0m[0m
+        mac_address        = "d0:0d:15:31:e3:01"
+        nat                = false
+        nat_ip_address     = [90mnull[0m[0m
+        nat_ip_version     = [90mnull[0m[0m
+        security_group_ids = [
+            "enpk2i3dsvevlr2og9lg",
+            "enpmk8rpn4puemo9n0jb",
+        ]
+        subnet_id          = "e2lhaflib41oo2n67fdf"
+    }
+
+    placement_policy {
+        host_affinity_rules       = []
+        placement_group_id        = [90mnull[0m[0m
+        placement_group_partition = 0
+    }
+
+    resources {
+        core_fraction = 20
+        cores         = 2
+        gpus          = 0
+        memory        = 1
+    }
+
+    scheduling_policy {
+        preemptible = true
+    }
+}
+
+# yandex_vpc_gateway.nat_gateway:
+resource "yandex_vpc_gateway" "nat_gateway" {
+    created_at  = "2025-12-07T15:25:18Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enpkq1l1hudebubpg4rh"
+    labels      = {}
+    name        = "develop-gateway"
+
+    shared_egress_gateway {}
+}
+
+# yandex_vpc_network.develop:
+resource "yandex_vpc_network" "develop" {
+    created_at                = "2025-12-07T15:25:18Z"
+    default_security_group_id = "enps8qngdnvhbmr4qtsn"
+    description               = [90mnull[0m[0m
+    folder_id                 = "b1grbnd43egs57caqic6"
+    id                        = "enptklrgdidpc8g5gcer"
+    labels                    = {}
+    name                      = "develop-net"
+    subnet_ids                = []
+}
+
+# yandex_vpc_route_table.rt:
+resource "yandex_vpc_route_table" "rt" {
+    created_at  = "2025-12-07T15:25:20Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enpj04qa030limi56q8v"
+    labels      = {}
+    name        = "develop-route-table"
+    network_id  = "enptklrgdidpc8g5gcer"
+
+    static_route {
+        destination_prefix = "0.0.0.0/0"
+        gateway_id         = "enpkq1l1hudebubpg4rh"
+        next_hop_address   = [90mnull[0m[0m
+    }
+}
+
+# yandex_vpc_security_group.LAN:
+resource "yandex_vpc_security_group" "LAN" {
+    created_at  = "2025-12-07T15:25:21Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enpk2i3dsvevlr2og9lg"
+    labels      = {}
+    name        = "LAN-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Permit ANY"
+        from_port         = 0
+        id                = "enpt4rjfh6gvhvs3emjv"
+        labels            = {}
+        port              = -1
+        predefined_target = [90mnull[0m[0m
+        protocol          = "ANY"
+        security_group_id = [90mnull[0m[0m
+        to_port           = 65535
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow 10.0.0.0/8"
+        from_port         = 0
+        id                = "enpbf9k1ib81csfe3jh3"
+        labels            = {}
+        port              = -1
+        predefined_target = [90mnull[0m[0m
+        protocol          = "ANY"
+        security_group_id = [90mnull[0m[0m
+        to_port           = 65535
+        v4_cidr_blocks    = [
+            "10.0.0.0/8",
+        ]
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_security_group.alb_sg:
+resource "yandex_vpc_security_group" "alb_sg" {
+    created_at  = "2025-12-07T15:25:22Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enphnjj65255877id2ko"
+    labels      = {}
+    name        = "alb-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Allow to web servers"
+        from_port         = -1
+        id                = "enp6a974m1rnsgpklbt7"
+        labels            = {}
+        port              = 80
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "10.0.1.0/24",
+            "10.0.2.0/24",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow all HTTP traffic"
+        from_port         = -1
+        id                = "enpuujk8s0c49mqdkh4h"
+        labels            = {}
+        port              = 80
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_security_group.bastion:
+resource "yandex_vpc_security_group" "bastion" {
+    created_at  = "2025-12-07T15:25:24Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enp1tcurrms4hqd53b3c"
+    labels      = {}
+    name        = "bastion-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Permit ANY"
+        from_port         = 0
+        id                = "enpbjcg7clobbijbdlvl"
+        labels            = {}
+        port              = -1
+        predefined_target = [90mnull[0m[0m
+        protocol          = "ANY"
+        security_group_id = [90mnull[0m[0m
+        to_port           = 65535
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow 0.0.0.0/0"
+        from_port         = -1
+        id                = "enpm2rpj87g0r223c7ah"
+        labels            = {}
+        port              = 22
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_security_group.elastic_sg:
+resource "yandex_vpc_security_group" "elastic_sg" {
+    created_at  = "2025-12-07T15:25:36Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enp2vhh3r5e0ds1hnuen"
+    labels      = {}
+    name        = "elastic-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Permit ANY"
+        from_port         = 0
+        id                = "enp1qr91dom8vpr4i7kl"
+        labels            = {}
+        port              = -1
+        predefined_target = [90mnull[0m[0m
+        protocol          = "ANY"
+        security_group_id = [90mnull[0m[0m
+        to_port           = 65535
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow Elasticsearch from Kibana"
+        from_port         = -1
+        id                = "enp32uo1uu7q70qh7m9o"
+        labels            = {}
+        port              = 9200
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = "enp45ad56vvnj1v377nq"
+        to_port           = -1
+        v4_cidr_blocks    = []
+        v6_cidr_blocks    = []
+    }
+    ingress {
+        description       = "Allow SSH from bastion"
+        from_port         = -1
+        id                = "enp0ss98gum2i13iev66"
+        labels            = {}
+        port              = 22
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = "enp1tcurrms4hqd53b3c"
+        to_port           = -1
+        v4_cidr_blocks    = []
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_security_group.grafana_sg:
+resource "yandex_vpc_security_group" "grafana_sg" {
+    created_at  = "2025-12-07T15:25:25Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enpajggnt0q2kpl03ciu"
+    labels      = {}
+    name        = "grafana-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Allow DNS and updates"
+        from_port         = -1
+        id                = "enpg2rgrp65na0hfoqo2"
+        labels            = {}
+        port              = 53
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+    egress {
+        description       = "Allow HTTP/HTTPS for updates"
+        from_port         = -1
+        id                = "enpkdek0vg2tlgie6rep"
+        labels            = {}
+        port              = 80
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+    egress {
+        description       = "Allow HTTPS for updates"
+        from_port         = -1
+        id                = "enpfj8ubbcpqjs5v72r3"
+        labels            = {}
+        port              = 443
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+    egress {
+        description       = "Allow to Prometheus"
+        from_port         = -1
+        id                = "enp5bhdlofgn0elu6shq"
+        labels            = {}
+        port              = 9090
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "10.0.1.0/24",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow HTTP from internet"
+        from_port         = -1
+        id                = "enpdf2ovng663gbt05qf"
+        labels            = {}
+        port              = 3000
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+    ingress {
+        description       = "Allow HTTPS from internet"
+        from_port         = -1
+        id                = "enp0939fp12fnjrtpuj1"
+        labels            = {}
+        port              = 443
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+    ingress {
+        description       = "Allow SSH from bastion"
+        from_port         = -1
+        id                = "enpfqnj0a50b8jculial"
+        labels            = {}
+        port              = 22
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = "enp1tcurrms4hqd53b3c"
+        to_port           = -1
+        v4_cidr_blocks    = []
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_security_group.kibana_sg:
+resource "yandex_vpc_security_group" "kibana_sg" {
+    created_at  = "2025-12-07T15:25:35Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enp45ad56vvnj1v377nq"
+    labels      = {}
+    name        = "kibana-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Permit ANY"
+        from_port         = 0
+        id                = "enpu7k8ugu8siprpte0k"
+        labels            = {}
+        port              = -1
+        predefined_target = [90mnull[0m[0m
+        protocol          = "ANY"
+        security_group_id = [90mnull[0m[0m
+        to_port           = 65535
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow HTTP from internet"
+        from_port         = -1
+        id                = "enpgpemlolsthmcqg7ot"
+        labels            = {}
+        port              = 5601
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = [90mnull[0m[0m
+        to_port           = -1
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+    ingress {
+        description       = "Allow SSH from bastion"
+        from_port         = -1
+        id                = "enpidv0e0sarngtfs96j"
+        labels            = {}
+        port              = 22
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = "enp1tcurrms4hqd53b3c"
+        to_port           = -1
+        v4_cidr_blocks    = []
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_security_group.web_sg:
+resource "yandex_vpc_security_group" "web_sg" {
+    created_at  = "2025-12-07T15:25:27Z"
+    description = [90mnull[0m[0m
+    folder_id   = "b1grbnd43egs57caqic6"
+    id          = "enpmk8rpn4puemo9n0jb"
+    labels      = {}
+    name        = "web-sg"
+    network_id  = "enptklrgdidpc8g5gcer"
+    status      = "ACTIVE"
+
+    egress {
+        description       = "Permit ANY"
+        from_port         = 0
+        id                = "enp3avi22j7811u73f1o"
+        labels            = {}
+        port              = -1
+        predefined_target = [90mnull[0m[0m
+        protocol          = "ANY"
+        security_group_id = [90mnull[0m[0m
+        to_port           = 65535
+        v4_cidr_blocks    = [
+            "0.0.0.0/0",
+        ]
+        v6_cidr_blocks    = []
+    }
+
+    ingress {
+        description       = "Allow HTTP from ALB"
+        from_port         = -1
+        id                = "enpbq5m7khiac864fauk"
+        labels            = {}
+        port              = 80
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = "enphnjj65255877id2ko"
+        to_port           = -1
+        v4_cidr_blocks    = []
+        v6_cidr_blocks    = []
+    }
+    ingress {
+        description       = "Allow SSH from bastion"
+        from_port         = -1
+        id                = "enpqaavgj3r02nmef0m5"
+        labels            = {}
+        port              = 22
+        predefined_target = [90mnull[0m[0m
+        protocol          = "TCP"
+        security_group_id = "enp1tcurrms4hqd53b3c"
+        to_port           = -1
+        v4_cidr_blocks    = []
+        v6_cidr_blocks    = []
+    }
+}
+
+# yandex_vpc_subnet.develop_a:
+resource "yandex_vpc_subnet" "develop_a" {
+    created_at     = "2025-12-07T15:25:21Z"
+    description    = [90mnull[0m[0m
+    folder_id      = "b1grbnd43egs57caqic6"
+    id             = "e9bnbe5upvlvf20e57gf"
+    labels         = {}
+    name           = "develop-net-ru-central1-a"
+    network_id     = "enptklrgdidpc8g5gcer"
+    route_table_id = "enpj04qa030limi56q8v"
+    v4_cidr_blocks = [
+        "10.0.1.0/24",
+    ]
+    v6_cidr_blocks = []
+    zone           = "ru-central1-a"
+}
+
+# yandex_vpc_subnet.develop_b:
+resource "yandex_vpc_subnet" "develop_b" {
+    created_at     = "2025-12-07T15:25:22Z"
+    description    = [90mnull[0m[0m
+    folder_id      = "b1grbnd43egs57caqic6"
+    id             = "e2lhaflib41oo2n67fdf"
+    labels         = {}
+    name           = "develop-net-ru-central1-b"
+    network_id     = "enptklrgdidpc8g5gcer"
+    route_table_id = "enpj04qa030limi56q8v"
+    v4_cidr_blocks = [
+        "10.0.2.0/24",
+    ]
+    v6_cidr_blocks = []
+    zone           = "ru-central1-b"
+}

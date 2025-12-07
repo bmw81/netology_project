@@ -1,339 +1,261 @@
 ---
-- name: Установка и настройка Kibana с использованием зеркала Яндекс для пакетов
+- name: Install and configure Kibana
   hosts: kibana
   become: yes
+  
   vars:
-    elasticsearch_host: "{{ groups.elastic[0] }}"
-    kibana_version: "8.19.7"
+    # Динамическое получение IP-адресов
+    kibana_host: "{{ ansible_default_ipv4.address }}"  # IP Kibana машины
+    elastic_host: "{{ groups['elastic'][0] }}"          # Первый хост из группы elastic
+    # Безопасность отключена в Elasticsearch, поэтому используем HTTP без аутентификации
+    elastic_protocol: "http"
     
   tasks:
-    # ========== 1. НАСТРОЙКА СИСТЕМЫ И РЕПОЗИТОРИЕВ ==========
-    - name: Обновление системы через Яндекс зеркала
+    # Шаг 1: Установка необходимых пакетов
+    - name: Install prerequisites
+      apt:
+        name:
+          - curl
+          - gnupg
+          - apt-transport-https
+          - ca-certificates
+          - wget
+        state: present
+        update_cache: yes
+    
+    # Шаг 2: Скачать и установить GPG-ключ Elastic
+    - name: Download and install Elastic GPG key
+      shell: |
+        wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/elasticsearch-keyring.gpg
+    
+    # Шаг 3: Добавление репозитория Elastic
+    - name: Add Yandex Elastic repository
+      copy:
+        dest: /etc/apt/sources.list.d/yandex-elastic.list
+        content: "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://mirror.yandex.ru/mirrors/elastic/8 stable main"
+        mode: '0644'
+    
+    - name: Update apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
-      environment:
-        http_proxy: "http://mirror.yandex.ru"
-        https_proxy: "http://mirror.yandex.ru"
-
-    - name: Установка необходимых утилит
+    
+    # Шаг 4: Установка Kibana
+    - name: Install Kibana
       apt:
-        name:
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - wget
-          - gnupg
-          - software-properties-common
+        name: kibana
         state: present
-        update_cache: yes
-
-    # ========== 2. УСТАНОВКА ELASTICSEARCH РЕПОЗИТОРИЯ ==========
-    - name: Скачивание GPG ключа Elasticsearch с официального источника
-      get_url:
-        url: "https://artifacts.elastic.co/GPG-KEY-elasticsearch"
-        dest: /tmp/GPG-KEY-elasticsearch
-        timeout: 30
-        headers:
-          User-Agent: "curl/7.68.0"
-      register: download_gpg
-
-    - name: Импорт GPG ключа Elasticsearch
-      apt_key:
-        file: /tmp/GPG-KEY-elasticsearch
-        state: present
-
-    - name: Добавление репозитория Elasticsearch
-      apt_repository:
-        repo: "deb https://artifacts.elastic.co/packages/8.x/apt stable main"
-        state: present
-        filename: elastic-8.x
-        update_cache: yes
-
-    # ========== 3. НАСТРОЙКА APT ДЛЯ ИСПОЛЬЗОВАНИЯ ЯНДЕКС КАК МИРРОРА ==========
-    - name: Создание конфигурации APT для использования Яндекс как зеркала
+    
+    # Шаг 5: Настройка Kibana
+    - name: Configure Kibana
       copy:
+        dest: /etc/kibana/kibana.yml
         content: |
-          Acquire::http::Proxy "http://mirror.yandex.ru:80";
-          Acquire::https::Proxy "http://mirror.yandex.ru:80";
+          # =================== System: Kibana Server (Optional) ===================
+          # Kibana is served by a back end server. This setting specifies the port to use.
+          #server.port: 5601
           
-          # Приоритет Яндекс зеркал
-          Acquire::http::Pipeline-Depth "0";
-          Acquire::http::No-Cache "true";
-          Acquire::BrokenProxy    "true";
-        dest: /etc/apt/apt.conf.d/99yandex-mirror
-        owner: root
-        group: root
+          # Specifies the address to which the Kibana server will bind. IP addresses and host names are both valid values.
+          # The default is 'localhost', which usually means remote machines will not be able to connect.
+          # To allow connections from remote users, set this parameter to a non-loopback address.
+          server.host: "{{ kibana_host }}"
+          
+          # Enables you to specify a path to mount Kibana at if you are running behind a proxy.
+          # Use the `server.rewriteBasePath` setting to tell Kibana if it should remove the basePath
+          # from requests it receives, and to prevent a deprecation warning at startup.
+          # This setting cannot end in a slash.
+          #server.basePath: ""
+          
+          # Specifies whether Kibana should rewrite requests that are prefixed with
+          # `server.basePath` or require that they are rewritten by your reverse proxy.
+          #server.rewriteBasePath: false
+          
+          # The maximum payload size in bytes for incoming server requests.
+          #server.maxPayloadBytes: 1048576
+          
+          # The Kibana server's name.  This is used for display purposes.
+          server.name: "kibana-{{ inventory_hostname }}"
+          
+          # =================== System: Kibana Server (Optional) ===================
+          # The URLs of the Elasticsearch instances to use for all your queries.
+          elasticsearch.hosts: ["{{ elastic_protocol }}://{{ elastic_host }}:9200"]
+          
+          # When this setting's value is true Kibana uses the hostname specified in the server.host
+          # setting. When the value of this setting is false, Kibana uses the hostname of the host
+          # that connects to this Kibana instance.
+          #elasticsearch.preserveHost: true
+          
+          # Kibana uses an index in Elasticsearch to store saved searches, visualizations and
+          # dashboards. Kibana creates a new index if the index doesn't already exist.
+          kibana.index: ".kibana"
+          
+          # The default application to load.
+          #kibana.defaultAppId: "home"
+          
+          # If your Elasticsearch is protected with basic authentication, these settings provide
+          # the username and password that the Kibana server uses to perform maintenance on the Kibana
+          # index at startup. Your Kibana users still need to authenticate with Elasticsearch, which
+          # is proxied through the Kibana server.
+          #elasticsearch.username: "elastic"
+          #elasticsearch.password: "elasticpassword"
+          
+          # =================== System: Elasticsearch (Optional) ===================
+          # Time in milliseconds to wait for Elasticsearch to respond to pings. Defaults to the value of
+          # the elasticsearch.requestTimeout setting.
+          #elasticsearch.pingTimeout: 1500
+          
+          # Time in milliseconds to wait for responses from the back end or Elasticsearch. This value
+          # must be a positive integer.
+          #elasticsearch.requestTimeout: 30000
+          
+          # List of Kibana client-side headers to send to Elasticsearch. To send *no* client-side
+          # headers, set this value to [] (an empty list).
+          #elasticsearch.requestHeadersWhitelist: [ authorization ]
+          
+          # Header names and values that are sent to Elasticsearch. Any custom headers cannot be overwritten
+          # by client-side headers, regardless of the elasticsearch.requestHeadersWhitelist configuration.
+          #elasticsearch.customHeaders: {}
+          
+          # Time in milliseconds for Elasticsearch to wait for responses from shards. Set to 0 to disable.
+          #elasticsearch.shardTimeout: 30000
+          
+          # =================== System: Logging ===================
+          # Enables you specify a file where Kibana stores log output.
+          logging.dest: /var/log/kibana/kibana.log
+          
+          # Set the value of this setting to true to suppress all logging output.
+          #logging.silent: false
+          
+          # Set the value of this setting to true to suppress all logging output other than error messages.
+          #logging.quiet: false
+          
+          # Set the value of this setting to true to log all events, including system usage information
+          # and all requests.
+          #logging.verbose: false
+          
+          # =================== System: Other ===================
+          # Specifies locale to be used for all localizable strings, dates and number formats.
+          # Supported languages are the following: English - en , by default , Chinese - zh-CN .
+          #i18n.locale: "en"
         mode: '0644'
-
-    # ========== 4. УСТАНОВКА KIBANA ==========
-    - name: Установка Kibana (будет использовать Яндекс как прокси)
-      apt:
-        name: "kibana={{ kibana_version }}"
-        state: present
-        update_cache: yes
-        force: yes
-      environment:
-        http_proxy: "http://mirror.yandex.ru:80"
-        https_proxy: "http://mirror.yandex.ru:80"
-      register: kibana_install
-      retries: 3
-      delay: 10
-
-    # ========== 5. ПРОВЕРКА УСТАНОВКИ ==========
-    - name: Проверка установленной версии Kibana
-      command: /usr/share/kibana/bin/kibana --version
-      register: kibana_version_check
-      changed_when: false
-      ignore_errors: yes
-
-    - name: Отображение версии Kibana
-      debug:
-        msg: "Установлена версия Kibana: {{ kibana_version_check.stdout }}"
-
-    # ========== 6. СОЗДАНИЕ ДИРЕКТОРИЙ ==========
-    - name: Создание необходимых директорий для Kibana
+        owner: kibana
+        group: kibana
+    
+    # Шаг 6: Создание директории для логов Kibana
+    - name: Create Kibana log directory
       file:
-        path: "{{ item }}"
+        path: /var/log/kibana
         state: directory
         owner: kibana
         group: kibana
         mode: '0755'
-      loop:
-        - /etc/kibana
-        - /var/lib/kibana
-        - /var/log/kibana
-        - /var/run/kibana
-
-    # ========== 7. КОНФИГУРАЦИЯ KIBANA ==========
-    - name: Создание минимальной рабочей конфигурации kibana.yml
+    
+    # Шаг 7: Настройка systemd для Kibana (ИСПРАВЛЕННЫЙ)
+    - name: Create systemd service directory for Kibana
+      file:
+        path: /etc/systemd/system/kibana.service.d
+        state: directory
+        mode: '0755'
+      when: ansible_service_mgr == "systemd"
+    
+    - name: Configure systemd service for Kibana
       copy:
+        dest: /etc/systemd/system/kibana.service.d/override.conf
         content: |
-          # Основные настройки
-          server.host: "0.0.0.0"
-          server.port: 5601
-          server.name: "kibana-server"
-          
-          # Elasticsearch
-          elasticsearch.hosts: ["http://{{ elasticsearch_host }}:9200"]
-          elasticsearch.requestTimeout: 90000
-          elasticsearch.pingTimeout: 30000
-          
-          # Важная настройка для Kibana 8.x - обязательно!
-          xpack.security.enabled: false
-          
-          # Ключи шифрования (требуются)
-          xpack.encryptedSavedObjects.encryptionKey: "{{ 'min32charkeyforencryptionhere!' }}"
-          xpack.reporting.encryptionKey: "{{ 'another32charkeyforreportinghere' }}"
-          xpack.security.encryptionKey: "{{ 'security32charencryptionkeyhere!!' }}"
-          
-          # Отключаем ненужные функции
-          xpack.fleet.enabled: false
-          xpack.apm.enabled: false
-          xpack.ml.enabled: false
-          
-          # Телеметрия
-          telemetry.enabled: false
-          telemetry.allowChangingOptInStatus: false
-          
-          # Оптимизация
-          elasticsearch.healthCheck.delay: 60000
-          elasticsearch.skipStartupConnectionCheck: true
-          
-          # Логирование
-          logging.dest: /var/log/kibana/kibana.log
-          logging.quiet: false
-          logging.verbose: false
-          
-          # Русский язык
-          i18n.locale: "ru"
-        dest: /etc/kibana/kibana.yml
-        owner: kibana
-        group: kibana
-        mode: '0640'
-      notify:
-        - Перезапуск Kibana
-
-    # ========== 8. SYSTEMD СЛУЖБА ==========
-    - name: Создание systemd службы
-      copy:
-        content: |
-          [Unit]
-          Description=Kibana
-          Documentation=https://www.elastic.co
-          Wants=network-online.target
-          After=network-online.target
-          
           [Service]
-          Type=simple
-          User=kibana
-          Group=kibana
-          Environment="KBN_PATH_CONF=/etc/kibana"
-          Environment="NODE_OPTIONS=--max-old-space-size=512"
-          ExecStart=/usr/share/kibana/bin/kibana
-          Restart=always
-          RestartSec=10
-          LimitNOFILE=65536
-          
-          # Безопасность
-          PrivateTmp=true
-          NoNewPrivileges=true
-          ProtectSystem=strict
-          ReadWritePaths=/var/lib/kibana /var/log/kibana /var/run/kibana
-          
-          [Install]
-          WantedBy=multi-user.target
-        dest: /etc/systemd/system/kibana.service
-        owner: root
-        group: root
+          # Увеличиваем время ожидания запуска
+          TimeoutStartSec=300
+          # Увеличиваем лимит памяти
+          MemoryLimit=2G
         mode: '0644'
-
-    # ========== 9. НАСТРОЙКА ПРАВ ==========
-    - name: Настройка прав для Kibana
-      shell: |
-        chown -R kibana:kibana /etc/kibana
-        chown -R kibana:kibana /var/lib/kibana
-        chown -R kibana:kibana /var/log/kibana
-        chown -R kibana:kibana /var/run/kibana
-        chmod 750 /var/lib/kibana
-        chmod 750 /var/log/kibana
-      changed_when: false
-
-    # ========== 10. ЗАПУСК СЛУЖБЫ ==========
-    - name: Перезагрузка systemd
+      when: ansible_service_mgr == "systemd"
+    
+    # Шаг 8: Обновление systemd и добавление Kibana в автозагрузку
+    - name: Reload systemd daemon
       systemd:
         daemon_reload: yes
-
-    - name: Включение автозапуска Kibana
+      when: ansible_service_mgr == "systemd"
+    
+    - name: Enable Kibana service
       systemd:
         name: kibana
         enabled: yes
-
-    - name: Запуск службы Kibana
+    
+    # Шаг 9: Запуск Kibana
+    - name: Start Kibana service
       systemd:
         name: kibana
         state: started
-
-    # ========== 11. ОЖИДАНИЕ ЗАПУСКА ==========
-    - name: Ожидание запуска Kibana (60 секунд)
+    
+    # Шаг 10: Ожидание запуска Kibana
+    - name: Wait for Kibana to start
       pause:
-        seconds: 60
-        prompt: "Kibana запускается... Подождите 60 секунд"
-
-    # ========== 12. ПРОВЕРКА СОСТОЯНИЯ ==========
-    - name: Проверка состояния Kibana
+        seconds: 30
+    
+    # Шаг 11: Проверка статуса Kibana
+    - name: Check Kibana status
       shell: |
-        echo "=== ПРОВЕРКА KIBANA ==="
-        echo ""
-        echo "1. СТАТУС СЛУЖБЫ:"
-        systemctl is-active kibana && echo "✓ Активна" || echo "✗ Неактивна"
-        echo ""
-        echo "2. ПРОЦЕССЫ:"
-        ps aux | grep kibana | grep -v grep | wc -l | xargs echo "Количество:"
-        echo ""
-        echo "3. ПОРТ:"
-        timeout 2 bash -c "echo > /dev/tcp/localhost/5601" 2>/dev/null && echo "✓ Порт 5601 открыт" || echo "✗ Порт 5601 закрыт"
-        echo ""
-        echo "4. ЛОГИ (последние 5 строк):"
-        journalctl -u kibana -n 5 --no-pager 2>/dev/null || echo "Логи недоступны"
-        echo ""
-        echo "5. ОШИБКИ:"
-        journalctl -u kibana --since "1 minute ago" --no-pager 2>/dev/null | grep -i "error\|fatal\|failed" || echo "Ошибок нет"
-      register: status_check
+        systemctl is-active kibana
+      register: kibana_status
       changed_when: false
-
-    - name: Отображение статуса
+    
+    - name: Display Kibana status
       debug:
-        msg: "{{ status_check.stdout_lines }}"
-
-    # ========== 13. ПРОВЕРКА API ==========
-    - name: Проверка доступности API Kibana
+        msg: "Kibana service status: {{ kibana_status.stdout }}"
+    
+    # Шаг 12: Проверка доступности Kibana
+    - name: Verify Kibana is accessible
       uri:
-        url: "http://localhost:5601/api/status"
+        url: "http://{{ kibana_host }}:5601/api/status"
         method: GET
-        timeout: 30
         status_code: 200
-        validate_certs: no
-      register: api_test
-      ignore_errors: yes
+        timeout: 30
+      register: kibana_check
+      until: kibana_check.status == 200
       retries: 10
-      delay: 6
-      until: api_test.status == 200
-
-    # ========== 14. УДАЛЕНИЕ ПРОКСИ НАСТРОЙКИ APT ==========
-    - name: Удаление прокси настроек APT (после установки)
-      file:
-        path: /etc/apt/apt.conf.d/99yandex-mirror
-        state: absent
+      delay: 10
       ignore_errors: yes
-
-    # ========== 15. ФИНАЛЬНЫЙ ОТЧЕТ ==========
-    - block:
-        - name: Успешная установка
-          debug:
-            msg: |
-              🎉 KIBANA УСПЕШНО УСТАНОВЛЕН!
-              
-              🌐 Доступ по адресу:
-              http://{{ ansible_default_ipv4.address }}:5601
-              
-              🔗 Elasticsearch:
-              {{ elasticsearch_host }}:9200
-              
-              📊 Для проверки:
-              curl http://localhost:5601/api/status
-              
-              ⚙️  Конфигурация:
-              /etc/kibana/kibana.yml
-              
-              📦 Установка через: Elastic репозиторий с прокси через Яндекс
-      when: api_test.status == 200
-
-    - block:
-        - name: Диагностика проблем
-          debug:
-            msg: |
-              ⚠️  ПРОБЛЕМЫ С ЗАПУСКОМ KIBANA
-              
-              Действия для диагностики:
-              
-              1. Проверьте логи:
-                 sudo journalctl -u kibana -f
-              
-              2. Проверьте конфигурацию:
-                 sudo cat /etc/kibana/kibana.yml
-              
-              3. Проверьте процесс:
-                 ps aux | grep kibana
-              
-              4. Проверьте порт:
-                 netstat -tlnp | grep 5601
-              
-              5. Проверьте Elasticsearch:
-                 curl {{ elasticsearch_host }}:9200
-              
-              ⏱️  Подождите еще 2-3 минуты и попробуйте снова
-              
-              📍 Адрес: http://{{ ansible_default_ipv4.address }}:5601
-      when: api_test.status != 200
-
-    # ========== 16. ОЧИСТКА ==========
-    - name: Очистка временных файлов
-      file:
-        path: /tmp/GPG-KEY-elasticsearch
-        state: absent
-
-    - name: Очистка кэша APT
-      apt:
-        autoclean: yes
-        autoremove: yes
-
-  handlers:
-    - name: Перезагрузка systemd
-      systemd:
-        daemon_reload: yes
-
-    - name: Перезапуск Kibana
-      systemd:
-        name: kibana
-        state: restarted
+    
+    - name: Display Kibana access status
+      debug:
+        msg: "Kibana is accessible at: http://{{ kibana_host }}:5601"
+      when: kibana_check.status == 200
+    
+    # Шаг 13: Проверка подключения Kibana к Elasticsearch
+    - name: Check Kibana logs for Elasticsearch connection
+      shell: |
+        # Ждем немного и проверяем логи
+        sleep 10
+        tail -30 /var/log/kibana/kibana.log | grep -E "(elasticsearch|connected|ready|error|fail)" | tail -5
+      register: kibana_logs
+      changed_when: false
+      ignore_errors: yes
+    
+    - name: Display Kibana logs
+      debug:
+        msg: |
+          Kibana logs:
+          {{ kibana_logs.stdout | default('No relevant logs found') }}
+    
+    # Шаг 14: Настройка индексов в Kibana (опционально)
+    - name: Setup Kibana index patterns via API
+      uri:
+        url: "http://{{ kibana_host }}:5601/api/saved_objects/index-pattern/filebeat-*"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+          kbn-xsrf: "true"
+        body_format: json
+        body:
+          attributes:
+            title: "filebeat-*"
+            timeFieldName: "@timestamp"
+      register: kibana_setup
+      ignore_errors: yes
+      when: kibana_check.status == 200
+    
+    - name: Display Kibana setup status
+      debug:
+        msg: "Kibana index pattern setup: {{ kibana_setup.status | default('Not attempted') }}"

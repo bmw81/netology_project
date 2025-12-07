@@ -36,60 +36,51 @@
         group: prometheus-nginxlog-exporter
         mode: '0755'
 
-    - name: Download Nginx Log Exporter .deb package
+    - name: Download Nginx Log Exporter binary
       get_url:
-        url: "https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v{{ nginx_log_exporter_version }}/prometheus-nginxlog-exporter_{{ nginx_log_exporter_version }}_linux_amd64.deb"
-        dest: /tmp/prometheus-nginxlog-exporter.deb
+        url: "https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v{{ nginx_log_exporter_version }}/prometheus-nginxlog-exporter_{{ nginx_log_exporter_version }}_linux_amd64.tar.gz"
+        dest: /tmp/prometheus-nginxlog-exporter.tar.gz
         mode: '0644'
-        timeout: 60
-      register: download_result
-      ignore_errors: yes
 
-    - name: Check if .deb file exists after download
-      stat:
-        path: /tmp/prometheus-nginxlog-exporter.deb
-      register: deb_file
+    - name: Extract binary
+      unarchive:
+        src: /tmp/prometheus-nginxlog-exporter.tar.gz
+        dest: /tmp/
+        remote_src: yes
+        creates: /tmp/prometheus-nginxlog-exporter/prometheus-nginxlog-exporter
 
-    - name: Install Nginx Log Exporter from .deb package (if available)
-      apt:
-        deb: /tmp/prometheus-nginxlog-exporter.deb
-      when: deb_file.stat.exists
-      register: deb_install
-      ignore_errors: yes
+    - name: Debug extracted files
+      shell: |
+        ls -la /tmp/
+        ls -la /tmp/prometheus-nginxlog-exporter*/ 2>/dev/null || echo "No extracted directory found"
+      register: debug_files
+      changed_when: false
 
-    - name: Alternative install - Download binary if .deb failed
-      block:
-        - name: Download binary archive
-          get_url:
-            url: "https://github.com/martin-helmich/prometheus-nginxlog-exporter/releases/download/v{{ nginx_log_exporter_version }}/prometheus-nginxlog-exporter_{{ nginx_log_exporter_version }}_linux_amd64.tar.gz"
-            dest: /tmp/prometheus-nginxlog-exporter.tar.gz
-            mode: '0644'
-            timeout: 60
-          register: binary_download
-          ignore_errors: yes
+    - name: Show debug info
+      debug:
+        var: debug_files.stdout
 
-        - name: Extract binary if download succeeded
-          unarchive:
-            src: /tmp/prometheus-nginxlog-exporter.tar.gz
-            dest: /tmp/
-            remote_src: yes
-            creates: "/tmp/prometheus-nginxlog-exporter-{{ nginx_log_exporter_version }}_linux_amd64/prometheus-nginxlog-exporter"
-          when: binary_download is succeeded
-          ignore_errors: yes
+    - name: Find extracted binary path
+      find:
+        paths: /tmp
+        patterns: "prometheus-nginxlog-exporter"
+        file_type: file
+        recurse: yes
+      register: found_binary
 
-        - name: Install binary manually
-          copy:
-            src: "/tmp/prometheus-nginxlog-exporter-{{ nginx_log_exporter_version }}_linux_amd64/prometheus-nginxlog-exporter"
-            dest: /usr/local/bin/prometheus-nginxlog-exporter
-            owner: prometheus-nginxlog-exporter
-            group: prometheus-nginxlog-exporter
-            mode: '0755'
-            remote_src: yes
-          when: binary_download is succeeded
-          ignore_errors: yes
+    - name: Show found binary
+      debug:
+        var: found_binary.files
 
-      when: deb_file.stat.exists == false or deb_install is failed
-      ignore_errors: yes
+    - name: Install binary using found path
+      copy:
+        src: "{{ found_binary.files[0].path if found_binary.files else '/tmp/prometheus-nginxlog-exporter/prometheus-nginxlog-exporter' }}"
+        dest: /usr/sbin/prometheus-nginxlog-exporter
+        owner: prometheus-nginxlog-exporter
+        group: prometheus-nginxlog-exporter
+        mode: '0755'
+        remote_src: yes
+      when: found_binary.files | length > 0
 
     - name: Add prometheus-nginxlog-exporter to adm group for log access
       user:
@@ -97,7 +88,7 @@
         groups: adm
         append: yes
 
-    - name: Create Nginx Log Exporter configuration (HCL format)
+    - name: Create Nginx Log Exporter configuration
       copy:
         content: |
           listen {
@@ -133,7 +124,7 @@
           Type=simple
           User=prometheus-nginxlog-exporter
           Group=prometheus-nginxlog-exporter
-          ExecStart=/usr/local/bin/prometheus-nginxlog-exporter -config-file /etc/prometheus-nginxlog-exporter.hcl
+          ExecStart=/usr/sbin/prometheus-nginxlog-exporter -config-file /etc/prometheus-nginxlog-exporter.hcl
           Restart=always
           RestartSec=5
 
@@ -150,7 +141,6 @@
         mode: '0755'
         owner: root
         group: adm
-        recurse: yes
 
     - name: Ensure nginx access log file exists
       file:
@@ -178,8 +168,8 @@
         url: "http://localhost:{{ nginx_log_exporter_port }}/metrics"
         method: GET
         status_code: 200
-        timeout: 10
       register: log_exporter_metrics
+      failed_when: log_exporter_metrics.status != 200
       ignore_errors: yes
 
     - name: Cleanup temporary files
@@ -187,18 +177,17 @@
         path: "{{ item }}"
         state: absent
       loop:
-        - /tmp/prometheus-nginxlog-exporter.deb
         - /tmp/prometheus-nginxlog-exporter.tar.gz
-        - /tmp/prometheus-nginxlog-exporter-{{ nginx_log_exporter_version }}_linux_amd64
-      ignore_errors: yes
+        - /tmp/prometheus-nginxlog-exporter*
+        - /tmp/prometheus-nginxlog-exporter-*
 
     - name: Display success message
       debug:
         msg: |
-          ✅ Nginx Log Exporter successfully installed on {{ inventory_hostname }}
-          📊 Port: {{ nginx_log_exporter_port }}
-          📝 Log file: /var/log/nginx/access.log
-          ⚙️  Config: /etc/prometheus-nginxlog-exporter.hcl
+          ✅ Nginx Log Exporter status on {{ inventory_hostname }}:
+          - Service: {{ 'Running' if log_exporter_metrics.status == 200 else 'Check manually' }}
+          - Port: {{ nginx_log_exporter_port }}
+          - Metrics: http://localhost:{{ nginx_log_exporter_port }}/metrics
 
 - name: Update Prometheus configuration with nginx log exporters
   hosts: prometheus
@@ -217,9 +206,9 @@
       copy:
         content: |
           - targets:
-            {% for host in groups['webservers'] %}
+            {% for host in groups['webservers'] -%}
             - "{{ host }}:4040"
-            {% endfor %}
+            {% endfor -%}
             labels:
               job: nginx-log-exporter
               environment: production
@@ -228,67 +217,40 @@
         group: prometheus
         mode: '0644'
 
+    - name: Display created YAML content
+      shell: cat /etc/prometheus/file_sd/nginx_log_exporter_targets.yml
+      register: yaml_content
+      changed_when: false
+
+    - name: Show YAML content
+      debug:
+        var: yaml_content.stdout
+
     - name: Validate Prometheus configuration syntax
-      shell: |
-        /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
+      shell: /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml
       register: prometheus_config_check
+      failed_when: prometheus_config_check.rc != 0
+      changed_when: false
       ignore_errors: yes
 
     - name: Display validation result
       debug:
         var: prometheus_config_check.stdout
 
-    - name: Reload Prometheus configuration with fallback
-      block:
-        - name: Try to reload Prometheus via API
-          uri:
-            url: http://localhost:9090/-/reload
-            method: POST
-            status_code: 200
-          register: prometheus_reload
-          ignore_errors: yes
-
-        - name: Restart Prometheus if reload failed
-          systemd:
-            name: prometheus
-            state: restarted
-          when: prometheus_reload is failed
-
-    - name: Wait for Prometheus to be ready
-      wait_for:
-        port: 9090
-        state: started
-        timeout: 30
-
-    - name: Simple targets check
-      shell: |
-        curl -s http://localhost:9090/api/v1/targets | python3 -c "
-        import json, sys
-        try:
-            data = json.load(sys.stdin)
-            targets = data.get('data', {}).get('activeTargets', [])
-            print(f'Found {len(targets)} total targets')
-            for target in targets:
-                job = target.get('labels', {}).get('job', 'unknown')
-                instance = target.get('labels', {}).get('instance', 'unknown')
-                health = target.get('health', 'unknown')
-                print(f'  - {job} ({instance}): {health}')
-            sys.exit(0)
-        except Exception as e:
-            print(f'Error: {e}')
-            sys.exit(1)
-        "
-      register: targets_check
-      ignore_errors: yes
-
-    - name: Display targets status
-      debug:
-        var: targets_check.stdout
+    - name: Simple Prometheus health check
+      shell: curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/-/healthy
+      register: prometheus_health
+      changed_when: false
 
     - name: Display final success message
       debug:
         msg: |
-          ✅ Nginx Log Exporter setup completed successfully!
-          - Exporters running on all web servers
-          - Prometheus configured with nginx targets
-          - Check targets in Prometheus UI: http://{{ inventory_hostname }}:9090/targets
+          ✅ Nginx Log Exporter setup completed!
+          
+          Summary:
+          - Nginx Log Exporter installed on all web servers
+          - Prometheus configured to scrape nginx metrics
+          
+          URLs:
+          - Prometheus UI: http://{{ inventory_hostname }}:9090
+          - Check targets in Prometheus UI -> Status -> Targets
